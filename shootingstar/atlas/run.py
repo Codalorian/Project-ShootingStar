@@ -42,6 +42,9 @@ def main() -> int:
     ap.add_argument("--threads", type=int, default=4,
                     help="4 beats 8 here: SMT oversubscription costs memory bandwidth")
     ap.add_argument("--no-rank", action="store_true", help="skip the Gram/SVD probe")
+    ap.add_argument("--dtype", default="float32",
+                    choices=["float32", "bfloat16", "float16"],
+                    help="float32 is the safe default; a 7B needs bfloat16 to fit in RAM")
     ap.add_argument("--out", default="results/atlas.json")
     a = ap.parse_args()
 
@@ -49,10 +52,11 @@ def main() -> int:
     torch.set_grad_enabled(False)
 
     from transformers import AutoModelForCausalLM, AutoTokenizer
+    dt = getattr(torch, a.dtype)
     t0 = time.time()
-    print(f"[atlas] loading {a.model} (fp32, {a.threads} threads)", file=sys.stderr)
+    print(f"[atlas] loading {a.model} ({a.dtype}, {a.threads} threads)", file=sys.stderr)
     tok = AutoTokenizer.from_pretrained(a.model)
-    model = AutoModelForCausalLM.from_pretrained(a.model, dtype=torch.float32)
+    model = AutoModelForCausalLM.from_pretrained(a.model, dtype=dt)
     model.eval()
     print(f"[atlas] loaded in {time.time()-t0:.1f}s", file=sys.stderr)
 
@@ -61,6 +65,11 @@ def main() -> int:
     n_tokens = batches.numel()
     print(f"[atlas] {batches.shape[0]} seqs x {a.seq_len} tok = {n_tokens} tokens "
           f"from '{a.split}'", file=sys.stderr)
+
+    n_params = sum(p.numel() for p in model.parameters())
+    need = n_params * dt.itemsize / 1e9
+    print(f"[atlas] {n_params/1e9:.2f}B params, {need:.1f} GB resident as {a.dtype}",
+          file=sys.stderr)
 
     atlas = Atlas(model, cap=a.cap, rank=not a.no_rank)
     t0 = time.time()
@@ -83,7 +92,7 @@ def main() -> int:
     res["meta"] = {
         "model": a.model, "split": a.split, "n_seqs": int(batches.shape[0]),
         "seq_len": a.seq_len, "n_tokens": int(n_tokens), "cap": a.cap,
-        "threads": a.threads, "dtype": "float32",
+        "threads": a.threads, "dtype": a.dtype,
         "config": {k: getattr(model.config, k, None) for k in
                    ("num_hidden_layers", "hidden_size", "intermediate_size",
                     "num_attention_heads", "num_key_value_heads", "vocab_size",

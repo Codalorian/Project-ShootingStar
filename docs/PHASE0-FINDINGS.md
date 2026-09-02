@@ -152,7 +152,41 @@ nothing. And the generations stay *fluent* at k=6 with 27% of layers gone:
 Eyeballing output would have passed this model. KL says its distribution has
 been rearranged beyond recognition. **Gate on KL.**
 
-## 5. Verdict
+## 5. Control: was 1.8x a TinyLlama quirk?
+
+**No — TinyLlama was the optimistic case.** Same corpus, same 16 384 tokens, same
+reservoir cap, run on `NousResearch/Llama-3.2-1B` (16 layers, 1.24B decode params,
+trained on ~9T tokens, distilled from the 8B/70B). Reproduce with
+`python -m shootingstar.compare results/atlas_*.json`.
+
+| signal | TinyLlama-1.1B | Llama-3.2-1B | thesis needs |
+|---|---|---|---|
+| max cos(layer in, out) | 0.897 | **0.880** | 0.99+ |
+| layers with cos ≥ 0.95 | 0 of 22 | **0 of 16** | several |
+| MLP neurons needed @ 5% | 62% | **72%** | 20–30% |
+| attention heads needed @ 5% | 75% | **89%** | ~30% |
+| mean easy-run, p > 0.8 | 0.41 | **0.30** | 2+ |
+| **implied ceiling @ 5%** | **1.80x** | **1.43x** | 10x |
+
+Every structural signal moved the wrong way. The budget sweep does too — 2.85x at a
+model-destroying 35% budget, against TinyLlama's 5.10x.
+
+**A mechanistic hint worth carrying into Phase 1.** Mean cos(in, out) is 0.730 here
+versus 0.859 for TinyLlama: Llama-3.2-1B does comparable work in 16 layers instead of
+22, so each layer moves the residual stream much further and none of them is close to
+an identity. That points at redundancy tracking **depth relative to task difficulty**
+rather than raw parameter count — which is directly testable, since 7B models have 32
+layers. If the hypothesis holds, depth redundancy should reappear at 7B for reasons
+that have nothing to do with being "bigger".
+
+**One counter-signal, not yet a lever.** Llama-3.2-1B's residual stream is far more
+concentrated: 389 of 2048 dimensions carry 99% of variance, against TinyLlama's 1229.
+But the top direction alone holds 89.6% of it, so this is mostly the massive-activation
+outlier feature again. It also measures *activations*, and decode bytes are *weights* —
+converting it to bytes saved would need low-rank weight structure, which no probe here
+has tested. Worth a Phase 1 probe; not a saving today.
+
+## 6. Verdict
 
 Implied ceiling from the naive product of all measured levers
 (`results/ceiling.txt`):

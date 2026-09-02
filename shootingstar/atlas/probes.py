@@ -304,11 +304,16 @@ class AttnHeadProbe:
 class ResidualRankProbe:
     """Effective dimensionality of the residual stream, via a streaming Gram."""
 
-    def __init__(self, model):
+    def __init__(self, model, dtype=None):
         self.layers = model.model.layers
         d = model.config.hidden_size
-        self.gram = [torch.zeros(d, d, dtype=torch.float64) for _ in self.layers]
-        self.sum = [torch.zeros(d, dtype=torch.float64) for _ in self.layers]
+        # one d x d accumulator per layer: at d=4096 that is 4.3 GB in float64
+        # but 2.1 GB in float32, which decides whether a 7B fits in RAM at all.
+        if dtype is None:
+            dtype = torch.float64 if d <= 3072 else torch.float32
+        self.dtype = dtype
+        self.gram = [torch.zeros(d, d, dtype=dtype) for _ in self.layers]
+        self.sum = [torch.zeros(d, dtype=dtype) for _ in self.layers]
         self.count = [0] * len(self.layers)
         self.handles = [l.register_forward_hook(self._mk(i))
                         for i, l in enumerate(self.layers)]
@@ -318,7 +323,7 @@ class ResidualRankProbe:
             y = DepthProbe._first_tensor(output)
             if y is None:
                 return
-            y = y.detach().double().reshape(-1, y.shape[-1])
+            y = y.detach().to(self.dtype).reshape(-1, y.shape[-1])
             self.gram[i] += y.T @ y
             self.sum[i] += y.sum(dim=0)
             self.count[i] += y.shape[0]
@@ -326,7 +331,7 @@ class ResidualRankProbe:
 
     @staticmethod
     def _spectrum(M):
-        ev = torch.linalg.eigvalsh(M).flip(0).clamp_min(0)
+        ev = torch.linalg.eigvalsh(M.double()).flip(0).clamp_min(0)
         p = ev / ev.sum().clamp_min(1e-30)
         cum = p.cumsum(0)
         return {
@@ -355,6 +360,7 @@ class ResidualRankProbe:
                 # a covariance from n samples has rank <= n-1; below ~4x the
                 # hidden size the spectrum is undersampling, not structure.
                 "undersampled": bool(n < 4 * G.shape[0]),
+                "accum_dtype": str(self.dtype).replace("torch.", ""),
                 "mean_norm_over_rms": (mu.norm() / second.diagonal().sum().sqrt()
                                        .clamp_min(1e-30)).item(),
                 "uncentred": self._spectrum(second),
@@ -422,12 +428,12 @@ class TokenDifficultyProbe:
 class Atlas:
     """Runs all hook-based probes together in a single forward pass."""
 
-    def __init__(self, model, cap: int = 192, rank: bool = True):
+    def __init__(self, model, cap: int = 192, rank: bool = True, gram_dtype=None):
         self.ctx = ResidualContext(model)
         self.depth = DepthProbe(model)
         self.mlp = MLPWidthProbe(model, cap, self.ctx)
         self.attn = AttnHeadProbe(model, cap, self.ctx)
-        self.rank = ResidualRankProbe(model) if rank else None
+        self.rank = ResidualRankProbe(model, gram_dtype) if rank else None
         self.tok = TokenDifficultyProbe()
 
     def result(self):

@@ -15,8 +15,10 @@ the machine's arithmetic sits idle waiting on memory. So the question is not
 
 ## Status: Phase 0 complete
 
-The implied compression ceiling on TinyLlama-1.1B is **1.8x**, not 10x — and
-only 5.1x even at an error budget that destroys the model. Full write-up:
+The implied compression ceiling on TinyLlama-1.1B is **1.8x**, not 10x — and only
+5.1x even at an error budget that destroys the model. A control run on
+Llama-3.2-1B came in **lower still at 1.43x**, so this is a property of 1B-scale
+models rather than of one model. Full write-up:
 **[docs/PHASE0-FINDINGS.md](docs/PHASE0-FINDINGS.md)**.
 
 That is a measurement on the *least* redundant plausible subject, so it does not
@@ -37,6 +39,7 @@ python3 -m venv --system-site-packages .venv && .venv/bin/pip install -r require
 | `bench/baseline_ollama.py` | the llama.cpp number we have to beat by 10x |
 | `shootingstar/atlas/` | depth, MLP width, head, rank and token-difficulty redundancy |
 | `shootingstar/gate/` | the KL quality gate, and a self-test that validates it |
+| `shootingstar/compare.py` | lines up N atlases — the scaling-law instrument |
 | `shootingstar/ceiling.py` | roofline × atlas → implied bytes/token ceiling |
 | `shootingstar/hw.py` | byte accounting and roofline bounds for any model shape |
 
