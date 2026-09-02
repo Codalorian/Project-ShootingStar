@@ -1,0 +1,7 @@
+# Phase 0 needs very little. torch is CPU-only by design: the whole point is
+# to measure what consumer hardware actually does.
+torch>=2.4
+transformers>=4.44
+huggingface_hub>=0.24
+pyarrow>=15          # reading the wikitext parquet without the `datasets` dep
+numpy>=1.24

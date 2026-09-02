@@ -1,0 +1,30 @@
+# --- secrets: never commit ---
+token.txt
+*.token
+.env
+.env.*
+*.pem
+credentials.json
+
+# --- python ---
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+.ipynb_checkpoints/
+
+# --- build artifacts ---
+bench/roofline
+bench/*.o
+
+# --- results: large / machine-specific, keep the dir ---
+results/*
+!results/.gitkeep
+
+# --- data / models ---
+data/*
+!data/.gitkeep
+!data/README.md
+*.safetensors
+*.gguf
