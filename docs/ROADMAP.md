@@ -67,12 +67,15 @@ a 70B at 4–5x.
 
 In priority order, by measured size and by how little each depends on unproven claims:
 
-1. **Cache residency — 10.7x, measured, unexploited.** L2/L3 at 357 GB/s against DRAM at
-   33 GB/s on the reference device. Needs no redundancy, no quality budget, and no
-   retraining. llama.cpp does not exploit it. This is now the largest single lever the
-   project has found and it is a data-layout and scheduling problem.
-2. **Speculative decoding — lossless.** 1.30x oracle bound on wikitext at 7B, which is
-   the pessimistic case; re-measure on workload text (`--split workload`) before judging.
+1. **Speculative decoding — lossless, and the real way to spend the idle compute.**
+   1.30x oracle bound on wikitext at 7B, which is the pessimistic case; re-measure on
+   workload text (`--split workload`) before judging. At batch size 1 the machine is 89%
+   idle waiting on memory, and verifying several drafted tokens per weight-scan is the
+   mechanism that converts that idle arithmetic into tokens. It is also the only place
+   the cache hierarchy genuinely helps: a ~100M-param drafter at 4-bit is ~50 MB and runs
+   many times per verification, so its locality is worth real wall-clock.
+2. **Close the implementation gap — 1.6x.** llama.cpp achieves 63% of the measured memory
+   roofline. That slack is redundancy-free and quality-free.
 3. **The interaction matrix.** Every lever in `ceiling.py` is individually measured; that
    they *compose* is assumed by everyone and demonstrated by no one. Method: for each
    pair, measure KL at matched byte-savings for A alone, B alone, and A+B. If
@@ -82,6 +85,18 @@ In priority order, by measured size and by how little each depends on unproven c
    relative to task difficulty; GQA as already-harvested head redundancy) and a predictor
    (tokens per parameter). We have not found this in the literature. It stands whether or
    not ShootingStar's own goal survived — and it did not.
+
+### Correction: cache residency is not a harvestable 10.7x
+
+Earlier drafts of this roadmap listed cache residency as the top priority on the strength
+of the measured 357 GB/s (L2/L3) versus 33 GB/s (DRAM) ratio. **That was wrong at this
+model size.** L3 on the reference device is 12 MB; a 7B at 4-bit is 3.8 GB — roughly 300x
+too large to be resident. At batch size 1 every weight is read once per token with no
+reuse, so nothing stays in cache long enough to be read twice. The 10.7x is a true fact
+about the hardware and a true ceiling on what better locality could ever buy, but it is
+not available speedup for single-stream decoding of a model this size, and redundancy
+(2.77x) cannot close a 300x gap. The exploitable version of the same physics is *reuse*,
+not residency — hence speculative decoding at position 1 above.
 
 ## 5. Rules of method
 

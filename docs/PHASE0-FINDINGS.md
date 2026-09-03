@@ -226,11 +226,19 @@ by these levers on models that fit on this laptop.
 
 ### What is worth more
 
-The **10.7x still sitting in the cache hierarchy** (§1): L2/L3 at 357 GB/s against DRAM
-at 33 GB/s, requiring no redundancy at all, unexploited by llama.cpp. Combined with the
-1.6x of implementation slack and lossless speculative decoding, a redundancy-free path
-plausibly reaches 15–22 tok/s — comparable to the redundancy path, with none of its
-quality cost.
+**Lossless speculative decoding, plus the 1.6x of implementation slack** (llama.cpp
+achieves 63% of the measured roofline). Together these plausibly reach 15–22 tok/s with
+no quality cost at all — comparable to the redundancy path, without its damage.
+
+*A correction on the cache number.* §1 measures a 10.7x ratio between L2/L3 (357 GB/s)
+and DRAM (33 GB/s), and earlier drafts treated that as an unexploited 10.7x of speedup.
+It is not, at this model size: L3 is 12 MB and a 7B at 4-bit is 3.8 GB, ~300x too large
+to be resident, and at batch size 1 there is no reuse to exploit — each weight is read
+once per token. The ratio is a real property of the machine and a real ceiling on what
+locality could ever buy, but redundancy at 2.77x cannot close a 300x gap. The exploitable
+form of the same physics is **reuse, not residency**: verifying several drafted tokens per
+weight-scan, which is speculative decoding. That is also where cache genuinely pays — a
+~100M-param drafter at 4-bit is ~50 MB and runs many times per verification.
 
 ### What is publishable
 
