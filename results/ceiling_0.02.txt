@@ -1,0 +1,43 @@
+==============================================================================
+SHOOTINGSTAR PHASE 0 -- IMPLIED COMPRESSION CEILING
+==============================================================================
+machine     : 33.4 GB/s read (4 threads), 1211 GOP/s int8
+              machine balance 36.3 ops/byte
+model       : tinyllama-1.1b, 1.03B decode params @ 4-bit
+atlas       : TinyLlama/TinyLlama-1.1B-Chat-v1.0 / held_out / 16384 tokens
+
+BASELINE       517.2 MB/token  ->    64.5 tok/s roofline ceiling
+            arithmetic intensity 4.0 ops/byte vs balance 36.3
+            => 89% of this machine's arithmetic is IDLE during decode
+
+LEVERS (error budget: 2% of residual norm)
+------------------------------------------------------------------------------
+lever                         bytes x  speedup   basis
+mlp_contextual_sparsity         0.848     1.18x  exact truncation error <= 2% of residual norm; mean keep-fra
+                                                requires a predictor for WHICH neurons, and a gather-matmul kern
+                                                el; neither is priced in here
+attn_head_sparsity              0.989     1.01x  exact truncation error <= 2% of residual norm; mean keep-fra
+                                                counts q_proj+o_proj only; k/v are shared across a GQA group and
+                                                 survive unless the whole group is dropped
+layer_dropping                  1.000     1.00x  0/22 layers with cos(in,out) >= 0.95: []
+                                                quality cost is measured independently in results/gate_selftest.
+                                                json
+speculative_decoding            0.809     1.24x  mean run of 0.41 consecutive tokens with top-1 prob > 0.8 (e [lossless]
+                                                ORACLE UPPER BOUND: assumes the drafter guesses every 'easy' tok
+                                                en. A real drafter is worse. Draft cost charged at 10%.
+------------------------------------------------------------------------------
+LOSSLESS ONLY                   0.809     1.24x  <- safe to bank
+NAIVE PRODUCT (all)             0.678     1.47x
+
+  bytes/token  517.2 MB -> 350.9 MB
+  ceiling      64.5 -> 95.1 tok/s (DRAM bandwidth)
+
+!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+CAVEAT. Each lever above is measured. Their PRODUCT is not.
+Nothing here shows these compose: contextual sparsity may not survive
+aggressive quantisation, and layer dropping and speculative decoding
+may be eating the same redundancy (both exploit 'this token was easy').
+Treat the product as an UPPER BOUND to be falsified in Phase 1.
+Also unpriced: every lever needs a kernel that actually skips the
+memory traffic. A technique with no kernel is a paper, not a speedup.
+!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!

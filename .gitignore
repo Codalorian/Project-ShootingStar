@@ -18,9 +18,10 @@ venv/
 bench/roofline
 bench/*.o
 
-# --- results: large / machine-specific, keep the dir ---
-results/*
-!results/.gitkeep
+# --- results ---
+# The atlas/roofline/ceiling records ARE the evidence behind docs/, and they are
+# small (~500K total), so they are tracked. Only run logs and scratch stay out.
+results/*.log
 
 # --- data / models ---
 data/*

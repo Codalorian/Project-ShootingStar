@@ -152,74 +152,89 @@ nothing. And the generations stay *fluent* at k=6 with 27% of layers gone:
 Eyeballing output would have passed this model. KL says its distribution has
 been rearranged beyond recognition. **Gate on KL.**
 
-## 5. Control: was 1.8x a TinyLlama quirk?
+## 5. Scaling: does redundancy grow with model size?
 
-**No — TinyLlama was the optimistic case.** Same corpus, same 16 384 tokens, same
-reservoir cap, run on `NousResearch/Llama-3.2-1B` (16 layers, 1.24B decode params,
-trained on ~9T tokens, distilled from the 8B/70B). Reproduce with
+**Yes, monotonically — and the mechanism is depth.** Three models, identical corpus,
+identical 16 384 tokens, identical settings. Reproduce with
 `python -m shootingstar.compare results/atlas_*.json`.
 
-| signal | TinyLlama-1.1B | Llama-3.2-1B | thesis needs |
+| signal | Llama-3.2-1B | TinyLlama-1.1B | **Llama-2-7B** | thesis needs |
+|---|---|---|---|---|
+| layers × hidden | 16 × 2048 | 22 × 2048 | 32 × 4096 | |
+| max cos(layer in, out) | 0.880 | 0.897 | **0.963** | 0.99+ |
+| layers with cos ≥ 0.95 | 0 of 16 | 0 of 22 | **7 of 32** | several |
+| MLP neurons needed @ 5% | 72% | 62% | **53%** | 20–30% |
+| attention heads needed @ 5% | 89% | 75% | **57%** | ~30% |
+| mean easy-run, p > 0.8 | 0.30 | 0.41 | **0.49** | 2+ |
+| **implied ceiling @ 5%** | **1.43x** | **1.80x** | **2.77x** | 10x |
+
+Every signal moves the right way with scale. Two findings carry the result:
+
+**Depth redundancy appears exactly where predicted.** The seven near-identity layers
+are 23–29 of 32 — **72–91% of the way down** — the deeper-middle band the layer-pruning
+literature reports, and a band that does not exist in either 1B model. The per-layer
+curve rises monotonically from 0.839 at layer 2 to 0.963 at layer 27, then collapses to
+0.694 at the final layer.
+
+**GQA is redundancy already harvested.** Head keep-fraction is 57% here against 75% and
+89% in the two 1B models — and those two use GQA, the architectural change that removes
+head redundancy by construction. Llama-2-7B predates it at this scale, so the redundancy
+is still present *and* worth double the bytes: under MHA a dropped head frees q, k, v and
+o, where under GQA only q and o can go (`shootingstar/ceiling.py` accounts for both).
+
+**The mechanism is over-parameterisation, and tokens-per-parameter tracks it:**
+
+| model | tokens/param | vs Chinchilla (~20) | ceiling |
 |---|---|---|---|
-| max cos(layer in, out) | 0.897 | **0.880** | 0.99+ |
-| layers with cos ≥ 0.95 | 0 of 22 | **0 of 16** | several |
-| MLP neurons needed @ 5% | 62% | **72%** | 20–30% |
-| attention heads needed @ 5% | 75% | **89%** | ~30% |
-| mean easy-run, p > 0.8 | 0.41 | **0.30** | 2+ |
-| **implied ceiling @ 5%** | **1.80x** | **1.43x** | 10x |
+| Llama-3.2-1B | ~7,300 | 365x past | 1.43x |
+| TinyLlama-1.1B | ~2,700 | 135x past | 1.80x |
+| Llama-2-7B | ~300 | 15x past | 2.77x |
 
-Every structural signal moved the wrong way. The budget sweep does too — 2.85x at a
-model-destroying 35% budget, against TinyLlama's 5.10x.
+Redundancy is what over-training squeezes out. The most heavily over-trained model has
+the least of it.
 
-**A mechanistic hint worth carrying into Phase 1.** Mean cos(in, out) is 0.730 here
-versus 0.859 for TinyLlama: Llama-3.2-1B does comparable work in 16 layers instead of
-22, so each layer moves the residual stream much further and none of them is close to
-an identity. That points at redundancy tracking **depth relative to task difficulty**
-rather than raw parameter count — which is directly testable, since 7B models have 32
-layers. If the hypothesis holds, depth redundancy should reappear at 7B for reasons
-that have nothing to do with being "bigger".
-
-**One counter-signal, not yet a lever.** Llama-3.2-1B's residual stream is far more
-concentrated: 389 of 2048 dimensions carry 99% of variance, against TinyLlama's 1229.
-But the top direction alone holds 89.6% of it, so this is mostly the massive-activation
-outlier feature again. It also measures *activations*, and decode bytes are *weights* —
-converting it to bytes saved would need low-rank weight structure, which no probe here
-has tested. Worth a Phase 1 probe; not a saving today.
+*Caveat: the 7B run used `--no-rank` and `--dtype bfloat16` to fit in 31 GB, so it has no
+residual-dimension figure. Every other signal is directly comparable.*
 
 ## 6. Verdict
 
-Implied ceiling from the naive product of all measured levers
-(`results/ceiling.txt`):
+| error budget | Llama-3.2-1B | TinyLlama-1.1B | Llama-2-7B |
+|---|---|---|---|
+| 2% | 1.31x | 1.47x | 2.12x |
+| **5%** | **1.43x** | **1.80x** | **2.77x** |
+| 10% | 1.68x | 2.48x | 3.82x |
+| 20% | 2.17x | 3.74x | 5.50x |
 
-| error budget | implied speedup |
-|---|---|
-| 2% | 1.47x |
-| **5%** | **1.80x** |
-| 10% | 2.48x |
-| 20% | 3.74x |
-| 35% (model destroyed) | **5.10x** |
+Applied to the measured baseline: **5.5 → ~15 tok/s** on llama2-7B, with a roofline
+ceiling moving 10.1 → 28.0 tok/s. That crosses from "slower than you can read" to
+comfortable. It is not 10x.
 
-**10x is not reachable on TinyLlama-1.1B at any error budget, by any
-combination of these levers.** And 1.80x is an upper bound twice over: the
-levers are assumed to compose (untested), and every one is assumed to have a
-kernel that actually skips the memory traffic (none is written).
+And 2.77x remains an upper bound twice over: the levers are assumed to compose, which no
+experiment here has tested, and each is assumed to have a kernel that actually skips the
+memory traffic, which none has. Banked lossless component: **1.30x** (speculative
+decoding, oracle bound).
 
-Banked lossless component: **1.24x** (speculative decoding, oracle bound).
+### What this settles
 
-### What this does and does not say
+**Redundancy is real and it scales — but not steeply enough, and not where you need it.**
+1.43 → 1.80 → 2.77 across 6x of parameters. Extrapolating that slope puts a 70B at
+perhaps 4–5x, on hardware that cannot hold a 70B. *The redundancy is largest exactly
+where the machine can least afford to run the model.*
 
-It does **not** say the moonshot is dead. It says the experiment was run on the
-worst plausible subject. TinyLlama-1.1B is trained on 3T tokens for 1.1B
-parameters — extraordinarily over-*trained* and therefore minimally
-over-*parameterised*. Redundancy is a consequence of over-parameterisation, so
-the model with the least of it is exactly the one we measured.
+The original goal — 10x on consumer hardware by exploiting redundancy — is not reachable
+by these levers on models that fit on this laptop.
 
-**The load-bearing question is now sharp and cheap to answer: does redundancy
-scale with model size?** Every number above is a point at 1.1B. If the same
-atlas on a 7B and a 13B shows the curves opening up — cos(in,out) climbing
-toward 0.99, MLP keep-fraction falling toward 0.2 — the thesis survives and
-the roadmap is a systems project. If the curves are flat in scale, the
-redundancy is not there and ShootingStar should become a different project
-(see `ROADMAP.md` §4).
+### What is worth more
 
-One measurement decides it. That is what Phase 0 bought.
+The **10.7x still sitting in the cache hierarchy** (§1): L2/L3 at 357 GB/s against DRAM
+at 33 GB/s, requiring no redundancy at all, unexploited by llama.cpp. Combined with the
+1.6x of implementation slack and lossless speculative decoding, a redundancy-free path
+plausibly reaches 15–22 tok/s — comparable to the redundancy path, with none of its
+quality cost.
+
+### What is publishable
+
+A **redundancy scaling law**, measured across three models and 6x of parameters, with a
+mechanism (depth relative to task difficulty, plus un-harvested architecture) and a
+predictor (tokens per parameter). We have not found this published. It is a result
+independent of whether ShootingStar's 10x goal survives — and it did not.

@@ -43,77 +43,66 @@ Full result in `docs/PHASE0-FINDINGS.md`. Built:
 - `shootingstar/gate/` — the KL quality gate, plus a self-test that validates it
 - `shootingstar/ceiling.py` — roofline × atlas → implied ceiling
 
-## 3. Phase 1 — the one question that decides the project
+## 3. Phase 1 — the deciding question, answered ✅
 
-Phase 0 measured a 1.1B model that is over-*trained* (3T tokens / 1.1B params)
-and therefore minimally over-*parameterised*. Redundancy is a consequence of
-over-parameterisation. **We measured the worst plausible subject.**
+**Does redundancy scale with model size? Yes, monotonically — but not steeply enough.**
+Measured on three models with an identical corpus and token budget:
 
-**Experiment 1 (do this first, it is one command per model): run the atlas on
-7B and 13B.** Everything hinges on whether these curves open up with scale:
+| signal | Llama-3.2-1B | TinyLlama-1.1B | Llama-2-7B |
+|---|---|---|---|
+| layers with cos ≥ 0.95 | 0 of 16 | 0 of 22 | **7 of 32** (layers 23–29) |
+| MLP neurons needed @ 5% | 72% | 62% | **53%** |
+| attention heads needed @ 5% | 89% | 75% | **57%** |
+| implied ceiling @ 5% | 1.43x | 1.80x | **2.77x** |
 
-| signal | 1.1B (measured) | thesis survives if 7B/13B shows |
-|---|---|---|
-| max cos(layer in, out) | 0.897 | → 0.99+, several layers |
-| MLP keep-frac @ 5% err | 0.62 | → 0.2–0.3 |
-| attn head keep-frac @ 5% | 0.65–0.90 | → 0.3 |
-| mean easy-run @ p>0.8 | 0.41 | → 2+ |
+Predicted before the run and scored after: max cos 0.95–0.98 (got 0.963), 3–6 droppable
+layers (got 7), MLP keep 45–60% (got 53%), head keep 50–70% (got 57%), ceiling ~2.8x
+(got 2.77x). The one miss was speculative easy-run, predicted 0.6–0.9, measured 0.49.
 
-`python -m shootingstar.atlas.run --model <7B> --n-seqs 16 --seq-len 512`.
-Budget ~2 hours per model on the reference device. Plot each signal against
-parameter count. **This is a scaling law for redundancy, and as far as we can
-tell nobody has published it.** It is a result whether the answer is yes or no.
+Full analysis in `docs/PHASE0-FINDINGS.md` §5. **The 10x goal is not reachable by these
+levers on models that fit on consumer hardware**, and the honest extrapolation puts even
+a 70B at 4–5x.
 
-**Experiment 2: rerun the atlas on `--split workload`.** Redundancy is a
-property of a model *on a distribution*. The speculative lever in particular
-was measured on wikitext, which is close to worst case; chat and code are far
-more predictable. Drop your real traffic into `data/`.
+## 4. What the project should do now
 
-**Experiment 3 — the interaction matrix.** Every lever in `ceiling.py` is
-individually published; that they *compose* is assumed by everyone and
-demonstrated by no one. The 10x thesis is precisely a multiplicativity claim.
-Measure the off-diagonal:
+In priority order, by measured size and by how little each depends on unproven claims:
 
-- does MLP contextual sparsity survive 2–3 bit quantisation, or does quant
-  noise swamp the neuron-importance signal it depends on?
-- does layer dropping degrade speculative acceptance rate? Both cash in "this
-  token was easy" — they may be eating the same lunch.
-- do KV eviction and head pruning compound the same error twice?
-
-Method: for each pair, measure KL at matched byte-savings for lever A alone,
-B alone, and A+B. If KL(A+B) > KL(A) + KL(B), they conflict. **This is the
-publishable contribution and it is sized for a small team.**
-
-## 4. If redundancy does not scale
-
-Then the premise is wrong and the project should change, not grind. In
-priority order, the levers Phase 0 found that *do not* depend on redundancy:
-
-1. **Cache residency.** Measured 10.7x between DRAM (33 GB/s) and L2/L3
-   (319–357 GB/s) on this machine. The 10x is sitting in the memory hierarchy.
-   A decode step whose working set stays resident wins without removing
-   anything. This is a scheduling and layout problem, not a model problem.
-2. **Speculative decoding.** Lossless, and its 1.24x oracle bound on wikitext
-   is the pessimistic case — re-measure on real workload text first.
-3. **Sub-4-bit weights with a VNNI kernel.** Orthogonal to all redundancy
-   findings; the reference device has AVX-512 VNNI and VPOPCNTDQ, which is a
-   good instruction set for bit-packed weights that llama.cpp does not
-   currently exploit on this class of chip.
+1. **Cache residency — 10.7x, measured, unexploited.** L2/L3 at 357 GB/s against DRAM at
+   33 GB/s on the reference device. Needs no redundancy, no quality budget, and no
+   retraining. llama.cpp does not exploit it. This is now the largest single lever the
+   project has found and it is a data-layout and scheduling problem.
+2. **Speculative decoding — lossless.** 1.30x oracle bound on wikitext at 7B, which is
+   the pessimistic case; re-measure on workload text (`--split workload`) before judging.
+3. **The interaction matrix.** Every lever in `ceiling.py` is individually measured; that
+   they *compose* is assumed by everyone and demonstrated by no one. Method: for each
+   pair, measure KL at matched byte-savings for A alone, B alone, and A+B. If
+   KL(A+B) > KL(A) + KL(B), they conflict. Layer dropping and speculative decoding are
+   the prime suspects — both cash in "this token was easy".
+4. **Publish the scaling law.** Three models, 6x of parameters, a mechanism (depth
+   relative to task difficulty; GQA as already-harvested head redundancy) and a predictor
+   (tokens per parameter). We have not found this in the literature. It stands whether or
+   not ShootingStar's own goal survived — and it did not.
 
 ## 5. Rules of method
 
 These exist because they are the ways this kind of project fools itself.
 
 1. **Price everything in bytes/token.** Not FLOPs, not parameter count.
-2. **Wall-clock or it did not happen.** Every claimed win must show up as
-   end-to-end tok/s on the reference device. A technique without a kernel that
-   actually skips the memory traffic is a paper, not a speedup.
-3. **Gate on KL, never on accuracy or eyeballed fluency.** Phase 0 produced
-   fluent text from a model with 27% of its layers removed and its output
-   distribution rearranged beyond recognition.
-4. **Exact reconstruction error, never importance proxies.** Magnitude and
-   weight-norm heuristics ignore cancellation and overstate prunability.
-5. **Never transfer an atlas across model scales or corpora.** `ceiling.py`
-   warns when you try. It is the easiest way to manufacture a fake 10x.
-6. **Report the product of levers as an upper bound to be falsified,** until
-   the interaction matrix says otherwise.
+2. **Wall-clock or it did not happen.** Every claimed win must show up as end-to-end
+   tok/s on the reference device. A technique without a kernel that actually skips the
+   memory traffic is a paper, not a speedup.
+3. **Gate on KL, never on accuracy or eyeballed fluency.** Phase 0 produced fluent text
+   from a model with 27% of its layers removed and its distribution rearranged beyond
+   recognition.
+4. **Exact reconstruction error, never importance proxies.** Magnitude and weight-norm
+   heuristics ignore cancellation and overstate prunability.
+5. **Never transfer an atlas across model scales or corpora.** `ceiling.py` warns when
+   you try. It is the easiest way to manufacture a fake 10x.
+6. **State predictions before the run.** Phase 1's were recorded with an explicit
+   falsifier, then scored. Do that every time.
+7. **Report the product of levers as an upper bound to be falsified,** until the
+   interaction matrix says otherwise.
+8. **Budget memory for the page cache, not just for allocations.** The first 7B attempt
+   allocated 16 GB of 23 GB and looked safe, but transformers mmaps weights: once the
+   cache was squeezed, every forward pass re-read 13.5 GB from disk and throughput fell
+   37x. Check that the model still fits in cache *after* everything else.

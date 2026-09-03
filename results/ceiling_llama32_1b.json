@@ -1,0 +1,54 @@
+{
+  "text": "==============================================================================\nSHOOTINGSTAR PHASE 0 -- IMPLIED COMPRESSION CEILING\n==============================================================================\nmachine     : 33.4 GB/s read (4 threads), 1211 GOP/s int8\n              machine balance 36.3 ops/byte\nmodel       : llama-3.2-1b, 1.24B decode params @ 4-bit\natlas       : NousResearch/Llama-3.2-1B / held_out / 16384 tokens\n\nBASELINE       617.9 MB/token  ->    54.0 tok/s roofline ceiling\n            arithmetic intensity 4.0 ops/byte vs balance 36.3\n            => 89% of this machine's arithmetic is IDLE during decode\n\nLEVERS (error budget: 5% of residual norm)\n------------------------------------------------------------------------------\nlever                         bytes x  speedup   basis\nmlp_contextual_sparsity         0.815     1.23x  exact truncation error <= 5% of residual norm; mean keep-fra\n                                                requires a predictor for WHICH neurons, and a gather-matmul kern\n                                                el; neither is priced in here\nattn_head_sparsity              0.988     1.01x  exact truncation error <= 5% of residual norm; mean keep-fra\n                                                counts q_proj+o_proj only; k/v are shared across a GQA group and\n                                                 survive unless the whole group is dropped\nlayer_dropping                  1.000     1.00x  0/16 layers with cos(in,out) >= 0.95: []\n                                                quality cost is measured independently in results/gate_selftest.\n                                                json\nspeculative_decoding            0.870     1.15x  mean run of 0.30 consecutive tokens with top-1 prob > 0.8 (e [lossless]\n                                                ORACLE UPPER BOUND: assumes the drafter guesses every 'easy' tok\n                                                en. A real drafter is worse. Draft cost charged at 10%.\n------------------------------------------------------------------------------\nLOSSLESS ONLY                   0.870     1.15x  <- safe to bank\nNAIVE PRODUCT (all)             0.700     1.43x\n\n  bytes/token  617.9 MB -> 432.5 MB\n  ceiling      54.0 -> 77.1 tok/s (DRAM bandwidth)\n\n!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!\nCAVEAT. Each lever above is measured. Their PRODUCT is not.\nNothing here shows these compose: contextual sparsity may not survive\naggressive quantisation, and layer dropping and speculative decoding\nmay be eating the same redundancy (both exploit 'this token was easy').\nTreat the product as an UPPER BOUND to be falsified in Phase 1.\nAlso unpriced: every lever needs a kernel that actually skips the\nmemory traffic. A technique with no kernel is a paper, not a speedup.\n!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!",
+  "baseline": {
+    "tok_s_bandwidth": 53.99164224915146,
+    "tok_s_compute": 489.99923945585954,
+    "tok_s_ceiling": 53.99164224915146,
+    "bound_by": "bandwidth",
+    "arithmetic_intensity": 4.0,
+    "machine_balance": 36.30185851318945,
+    "idle_compute_frac": 0.8898128039767801,
+    "bytes_per_token": 617873408,
+    "weight_bytes": 617873408,
+    "kv_bytes": 0
+  },
+  "levers": [
+    {
+      "name": "mlp_contextual_sparsity",
+      "factor": 0.8146796775562156,
+      "basis": "exact truncation error <= 5% of residual norm; mean keep-fraction 0.72 of 8192 neurons",
+      "lossless": false,
+      "note": "requires a predictor for WHICH neurons, and a gather-matmul kernel; neither is priced in here",
+      "speedup": 1.227476304551609
+    },
+    {
+      "name": "attn_head_sparsity",
+      "factor": 0.9877810776410691,
+      "basis": "exact truncation error <= 5% of residual norm; mean keep-fraction 0.89 of heads",
+      "lossless": false,
+      "note": "counts q_proj+o_proj only; k/v are shared across a GQA group and survive unless the whole group is dropped",
+      "speedup": 1.0123700712997166
+    },
+    {
+      "name": "layer_dropping",
+      "factor": 1.0,
+      "basis": "0/16 layers with cos(in,out) >= 0.95: []",
+      "lossless": false,
+      "note": "quality cost is measured independently in results/gate_selftest.json",
+      "speedup": 1.0
+    },
+    {
+      "name": "speculative_decoding",
+      "factor": 0.869775390625,
+      "basis": "mean run of 0.30 consecutive tokens with top-1 prob > 0.8 (easy fraction 0.23)",
+      "lossless": true,
+      "note": "ORACLE UPPER BOUND: assumes the drafter guesses every 'easy' token. A real drafter is worse. Draft cost charged at 10%.",
+      "speedup": 1.149722113063493
+    }
+  ],
+  "naive_product_factor": 0.699930148933577,
+  "lossless_product_factor": 0.869775390625,
+  "bytes_per_token_after": 432468226.4835368,
+  "tok_s_ceiling_after": 77.13861494809711,
+  "tok_s_ceiling_after_cache_aware": 71.50802020210884
+}

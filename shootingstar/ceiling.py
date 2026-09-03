@@ -76,12 +76,19 @@ def build_levers(atlas: dict, shape: ModelShape, resid_budget: float,
                                     "rel_err_vs_resid_mean")
               for L in atlas["attn_heads"]]
     hk = sum(hkeeps) / len(hkeeps)
+    # Under MHA every head owns its own k and v, so dropping a head drops all
+    # four projections. Under GQA k/v are shared across a group and survive
+    # unless the whole group goes, so only q and o are credited.
+    mha = shape.n_kv_heads == shape.n_heads
+    head_share = (P["attn.q_proj"] + P["attn.o_proj"]
+                  + (P["attn.k_proj"] + P["attn.v_proj"] if mha else 0)) / total
     levers.append(Lever(
-        "attn_head_sparsity", 1 - qo_share * (1 - hk),
+        "attn_head_sparsity", 1 - head_share * (1 - hk),
         f"exact truncation error <= {resid_budget:.0%} of residual norm; "
         f"mean keep-fraction {hk:.2f} of heads",
-        note="counts q_proj+o_proj only; k/v are shared across a GQA group and "
-             "survive unless the whole group is dropped"))
+        note=("MHA: q+k+v+o all freed per dropped head"
+              if mha else
+              "GQA: q+o only; k/v are shared across a group and survive")))
 
     # ---- 3. depth ----
     drop = [L for L in atlas["depth"] if L["cos_in_out"] >= depth_cos_threshold]

@@ -15,16 +15,14 @@ the machine's arithmetic sits idle waiting on memory. So the question is not
 
 ## Status: Phase 0 complete
 
-The implied compression ceiling on TinyLlama-1.1B is **1.8x**, not 10x — and only
-5.1x even at an error budget that destroys the model. A control run on
-Llama-3.2-1B came in **lower still at 1.43x**, so this is a property of 1B-scale
-models rather than of one model. Full write-up:
+Measured across three models, the implied compression ceiling is **1.43x → 1.80x →
+2.77x** (Llama-3.2-1B, TinyLlama-1.1B, Llama-2-7B) — not 10x. Redundancy is real and
+it **does** scale with model size, but not steeply enough, and it is largest exactly
+where the machine can least afford to run the model. Full write-up:
 **[docs/PHASE0-FINDINGS.md](docs/PHASE0-FINDINGS.md)**.
 
-That is a measurement on the *least* redundant plausible subject, so it does not
-close the question — it sharpens it into one cheap experiment, described in
-**[docs/ROADMAP.md](docs/ROADMAP.md)** §3: *does redundancy scale with model
-size?*
+The load-bearing question — *does redundancy scale with size?* — is now answered, and
+the follow-on work is set out in **[docs/ROADMAP.md](docs/ROADMAP.md)**.
 
 ## Run it
 
