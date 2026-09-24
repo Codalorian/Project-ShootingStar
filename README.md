@@ -121,17 +121,30 @@ small, intelligently selected working set in memory.
 
 ```
 WORKFLOW.md     the design this repo is building toward — the canonical statement of it
-pytorch/        PyTorch source (v2.15.0a0), vendored
-transformers/   Hugging Face Transformers source (v5.18.0.dev0), vendored
+pytorch/        PyTorch source (v2.15.0a0), as a submodule
+transformers/   Hugging Face Transformers source (v5.18.0.dev0), as a submodule
 ```
 
-Both dependencies are vendored as source rather than installed as wheels: block-granular
+Both dependencies are carried as source rather than installed as wheels: block-granular
 weight loading and kernels that actually skip memory traffic live below the Python API,
 so they have to be modified and rebuilt.
 
-> **Note:** `pytorch` and `transformers` are recorded as gitlinks but the repo has no
-> `.gitmodules`, so a fresh `git clone` leaves both directories empty. Add submodule
-> entries or clone the two trees in place before building.
+Both are tracked as git submodules pinned to the exact upstream commits the project
+builds against:
+
+| submodule | upstream | pinned at |
+|---|---|---|
+| `pytorch` | github.com/pytorch/pytorch | `2e07892` (v2.15.0a0) |
+| `transformers` | github.com/huggingface/transformers | `89b6b17` (v5.18.0.dev0) |
+
+```bash
+git clone --recursive <this repo>
+# or, in an existing clone:
+git submodule update --init --recursive
+```
+
+`pytorch` carries 37 submodules of its own under `third_party/` (65 once their own
+nested submodules are counted), which is what the `--recursive` is for.
 
 ## Prior work
 

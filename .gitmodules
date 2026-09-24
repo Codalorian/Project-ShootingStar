@@ -1,0 +1,6 @@
+[submodule "pytorch"]
+	path = pytorch
+	url = https://github.com/pytorch/pytorch.git
+[submodule "transformers"]
+	path = transformers
+	url = https://github.com/huggingface/transformers.git
