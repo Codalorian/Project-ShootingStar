@@ -117,10 +117,15 @@ If successful, ShootingStar would make it possible to experiment with models who
 parameter count is much larger than the machine's available RAM, while only keeping a
 small, intelligently selected working set in memory.
 
+How that gets built — the phase order, the instruments each phase needs, the predictions
+to score and the conditions under which the project should stop — is in
+**[ROADMAP.md](ROADMAP.md)**.
+
 ## Repository layout
 
 ```
 WORKFLOW.md     the design this repo is building toward — the canonical statement of it
+ROADMAP.md      how it gets executed: phases, instruments, kill criteria
 pytorch/        PyTorch source (v2.15.0a0), as a submodule
 transformers/   Hugging Face Transformers source (v5.18.0.dev0), as a submodule
 ```
