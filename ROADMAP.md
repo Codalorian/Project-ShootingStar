@@ -41,19 +41,20 @@ tok/s  ≤  ──────────────────────�
 ```
 
 with `T_compute` (~3 ms) small enough to overlap away entirely. Everything the project
-builds moves one of three terms. On the reference device (`BW_ssd` = 3.5 GB/s, to be
-measured in Phase 0):
+builds moves one of three terms. On the reference device (`BW_ssd` = **3.1 GB/s,
+measured**):
 
 | active params (4-bit) | miss 100% | miss 35% | miss 10% | miss 3% |
 |---|---|---|---|---|
-| **2B** (1.0 GB/token) — the target | 3.5 tok/s | **10 tok/s** | 35 tok/s | 117 tok/s |
-| 3B (1.5 GB/token) — Qwen3-30B-A3B | 2.3 | 6.7 | 23 | 78 |
-| 22B (11 GB/token) — Qwen3-235B-A22B | 0.3 | 0.9 | 3.2 | 10.6 |
+| **2B** (1.0 GB/token) — the target | 3.1 tok/s | **8.9 tok/s** | 31 tok/s | 103 tok/s |
+| 3B (1.5 GB/token) — Qwen3-30B-A3B | 2.1 | 5.9 | 21 | 69 |
+| 22B (11 GB/token) — Qwen3-235B-A22B | 0.3 | 0.8 | 2.8 | 9.4 |
 
 Read off the two things that matter:
 
 - **The 2B-active target is not crazy.** It needs a miss rate ≤ 35% to clear 10 tok/s.
-  That is a demanding but not absurd cache requirement.
+  That is a demanding but not absurd cache requirement. The DRAM/SSD balance point is a
+  **9.4% miss rate** — below that, DRAM becomes the wall and further cache work is wasted.
 - **Active volume, not total size, is what kills you.** A 22B-active model needs a *3%*
   miss rate for the same result. Worse, 11 GB of active weights per token cannot fit in a
   RAM cache on this machine *at all*, so a high hit rate is not merely unachieved, it is
@@ -72,18 +73,21 @@ Measured, not assumed — except where flagged.
 | | |
 |---|---|
 | CPU | i7-1165G7, 4c/8t, AVX-512 + VNNI. Use **4 threads** (read bandwidth peaks there, −17% at 8) |
-| RAM | 31 GB LPDDR4x, **33 GB/s** measured read. ~20 GB usable after OS; budget **~14 GB** for the block cache after activations and KV |
+| RAM | 31 GB, **33 GB/s** measured read. ~9 GB is already consumed by the desktop session, so the **practical resident-weight budget is ~12-14 GB**, not 21 and never 31 |
 | L2 / L3 | 5 MB (4×1.25) / 12 MB — irrelevant at this scale, see the correction in §9 |
 | SSD | **Intel SSDPEKNU020TZ (670p), 2 TB, QLC**, PCIe **3.0 x4** (8.0 GT/s ×4 measured) |
-| SSD ceiling | link cap ~3.94 GB/s; vendor sequential read ~3.5 GB/s — **Phase 0 must measure the real figure under the access pattern a block loader actually issues** |
+| SSD ceiling | **3.1 GB/s measured** (`docs/PHASE0-STORAGE.md`) at ≥256 KB blocks, QD ≥ 4 — 79% of the PCIe 3.0 x4 link cap. The vendor's ~3.5 GB/s is 13% optimistic |
 | **Free disk** | **187 GB** — the binding constraint on model size |
-| `max_sectors_kb` | **128** — single I/Os are split at 128 KB; raise toward `max_hw_sectors_kb` and re-measure |
+| `max_sectors_kb` | **128** — splits larger requests, but measured *not* to be a barrier: 256 KB still beats 128 KB. Not on the critical path |
 | scheduler | `none` (correct for NVMe) |
 
 Two consequences that are easy to miss:
 
-- **RAM is only ~9.4x faster than this SSD** sequentially. That is the whole budget the
+- **RAM is only ~10.6x faster than this SSD** (33 vs 3.1 GB/s, measured). That is the whole budget the
   project is spending. It is not 100x, and it is not 2x.
+- **The storage-native regime starts at ~26B params @ 4-bit**, not 40B. A 30B dense
+  model (~17 GB) does *not* fit the ~13 GB budget — it thrashes, exactly as rule 8 in §9
+  describes. Models this machine cannot hold start well below where intuition puts them.
 - **187 GB free caps the model.** A 500B model at 4-bit is 335 GB and **does not fit**.
   At 4-bit the ceiling is ~370B params; reaching 500B on this disk requires ~3-bit or
   clearing space. Decide this before downloading anything.
@@ -112,9 +116,13 @@ training* problem, not a runtime problem. Which forces an honest split:
 
 - **The runtime can be built and validated now**, on existing models, without training
   anything. This is most of the engineering and all of the near-term results.
-- **The 250x-sparse 500B model cannot be trained on this hardware.** A run at that scale
-  is eight figures. The deliverable for that half is *an architecture plus small-scale
-  evidence that it works*, not the model.
+- **The 250x-sparse 500B model cannot be trained on this hardware**, but it is far cheaper
+  than its total size suggests: MoE training compute scales with *active* parameters, so
+  scaling DeepSeek-V3's published 2.788M H800-hours (37B active) down to 2B active puts it
+  near **100k GPU-hours, ~$200-500k**. The binding constraint is memory, not compute —
+  500B params of weights, fp32 master and Adam state is ~7 TB, so ~90-100 H100s are needed
+  just to *hold* it. The deliverable for this half is *an architecture plus small-scale
+  evidence*, not the model.
 
 Write that down now, because the failure mode is drifting into believing a 500B model is
 a milestone rather than someone else's budget.
@@ -125,9 +133,10 @@ Deliverable: **one number** — the implied tok/s ceiling for a given (model, ca
 SSD), computed as `storage roofline × routing atlas`. This deliberately mirrors the
 previous project's `roofline × atlas → ceiling`, which worked.
 
-### 4.1 `bench/ssd_roofline.c` — the storage roofline
+### 4.1 `bench/ssd_roofline.c` — the storage roofline ✅ complete
 
-Measure achievable read bandwidth across the space a block loader can actually occupy:
+**Result: 3.1 GB/s peak, ≥256 KB blocks, QD ≥ 4. Random ≈ sequential at that block size.**
+Full write-up in `docs/PHASE0-STORAGE.md`. What was measured:
 
 - block size 4 KB → 16 MB (note the 128 KB split at `max_sectors_kb`)
 - queue depth 1 → 256
@@ -135,11 +144,18 @@ Measure achievable read bandwidth across the space a block loader can actually o
 - `io_uring` vs `pread` vs `mmap` + `MADV_WILLNEED`
 - sustained multi-minute reads, to catch thermal and QLC effects
 
-Expected shape, to be confirmed or falsified: QD1 4 KB random is latency-bound near
-~40 MB/s and useless; QD1 at 128 KB is ~0.9 GB/s; saturation needs QD ≥ 4–8 with large
-blocks. **This directly sets the minimum viable block granularity** — if 3.5 GB/s needs
-≥ 512 KB reads, then a "block" must be ≥ 512 KB of contiguous weights, which constrains
-the architecture in §8.
+Predicted before the run and scored after: QD1 4 KB random latency-bound near ~40 MB/s
+(measured **90 MB/s**, 46 µs), QD1 128 KB ~0.9 GB/s (measured **0.73**), saturation at
+QD 4–8 with large blocks (**confirmed** — QD4 suffices, QD64 buys nothing). The miss was
+the *direction* of the queue-depth lever: I expected deep queues to matter and they do not.
+
+**Block size is the lever, not queue depth.** 4 KB → 256 KB buys 2.3x; QD4 → QD64 buys
+nothing. So **a loadable block must be ≥ 256 KB contiguous** (≥ 512K params at 4-bit),
+and threads + `pread` at QD 4–8 already reaches the roofline — `io_uring` is an
+optimisation, not a prerequisite.
+
+**Tail latency, not mean, prices a blocking miss:** 256 KB reads are 212 µs mean but
+292 µs p99 and 3.3 ms max. Prefetch lead must cover the tail.
 
 **`O_DIRECT` is not optional.** With buffered I/O the kernel page cache holds a second
 copy of every block, competing with your own cache on a 31 GB machine for a 118 GB
@@ -238,12 +254,19 @@ If the runtime cannot beat `mmap` + page cache end to end, there is no result, h
 good the hit-rate curves look. Measure both on identical weights, on the reference
 device, in tok/s.
 
-**Milestone:** a model whose on-disk size exceeds RAM, decoding at a measured tok/s, with
-a byte-per-token accounting that matches `hw.py`'s prediction. Pick the flagship by
-§2's 187 GB limit — **Qwen3-235B-A22B at 4-bit (~118 GB)** fits and is genuinely 4x RAM,
-but note from §1 that its 22B active volume caps it near 1 tok/s. It is a *correctness and
-bandwidth* demonstration, not a speed one. Say so in the write-up rather than quietly
-choosing a friendlier model.
+**First milestone: Qwen3-30B-A3B at 4-bit (~16 GB).** It cannot run on this machine today
+(16 GB of weights against a ~13 GB budget), its 3B active volume puts the ceiling near
+**14 tok/s**, and it is small enough to iterate on in hours. The demonstration is
+*unrunnable → conversational*, which is the honest headline claim.
+
+**Second milestone: Qwen3-235B-A22B at 4-bit (~118 GB).** Genuinely 9x the RAM budget, so
+it exercises the cache and prefetcher properly — but note from §1 that its 22B active
+volume caps it near **1 tok/s**. It is a *correctness and bandwidth-scaling*
+demonstration, not a speed one. Say so in the write-up rather than quietly reporting only
+the friendlier model.
+
+Every milestone reports measured tok/s plus a byte-per-token accounting that matches
+`hw.py`'s prediction. If they disagree, the model of the system is wrong.
 
 ## 7. Phase 3 — bits per weight, and layout
 
@@ -253,9 +276,12 @@ The second of the only two levers. Now the KL gate binds.
   on a cold block then costs half the bytes. Because cold blocks are by definition rarely
   used, the quality cost should be far below uniform quantisation at the same mean bit
   width — *should*, so measure it against that exact control.
-- **Co-activation placement.** Order blocks on disk so experts that fire together are
-  physically adjacent, turning several random reads into one sequential read. The §4.2
-  co-activation matrix gives the clustering objective. This is pure win — no quality cost.
+- **~~Co-activation placement~~ — cancelled by measurement.** The plan was to order blocks
+  on disk so co-fired experts sit adjacent, turning several random reads into one
+  sequential read. **Phase 0 measured random reads at ≥256 KB to be within 0–2% of
+  sequential**, so there is no penalty to remove and this optimisation is worth
+  approximately nothing on this device. Do not build it. (Re-open only if a future target
+  device shows a real random penalty at block size.)
 - **Block size vs waste.** Bigger blocks hit the measured bandwidth sweet spot but
   transfer parameters you did not need. There is an optimum; find it empirically.
 

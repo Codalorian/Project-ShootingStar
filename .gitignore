@@ -16,7 +16,12 @@ venv/
 
 # --- build artifacts ---
 bench/roofline
+bench/ssd_roofline
 bench/*.o
+
+# --- benchmark scratch: the storage roofline test file is 32 GiB ---
+*.dat
+ssd_roofline.dat
 
 # --- results ---
 # The atlas/roofline/ceiling records ARE the evidence behind docs/, and they are
